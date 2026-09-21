@@ -4,7 +4,7 @@ Playwright 浏览器与反检测驱动模块
 import asyncio
 from typing import Optional
 from playwright.async_api import async_playwright, BrowserContext, Page, Playwright
-from config import USER_DATA_DIR, USER_AGENT, DEFAULT_HEADLESS, PAGE_TIMEOUT_MS
+from config import STORAGE_STATE_FILE, USER_AGENT, DEFAULT_HEADLESS, PAGE_TIMEOUT_MS
 
 STEALTH_INIT_SCRIPT = """
 (() => {
@@ -42,57 +42,57 @@ STEALTH_INIT_SCRIPT = """
 """
 
 class BrowserManager:
-    """管理持久化 Playwright 浏览器实例"""
+    """管理 Playwright 浏览器实例并自动加载 storage_state 登录凭据"""
 
     def __init__(self, headless: bool = DEFAULT_HEADLESS):
         self.headless = headless
         self._playwright: Optional[Playwright] = None
-        self._context: Optional[BrowserContext] = None
+        self._browser = None
 
-    async def get_context(self, headless: Optional[bool] = None) -> BrowserContext:
-        """获取或创建持久化 BrowserContext"""
+    async def get_browser(self, headless: Optional[bool] = None):
         target_headless = self.headless if headless is None else headless
-        
-        # 如果上下文存在但 headless 需求变化，先关闭重建
-        if self._context:
-            return self._context
-
         if not self._playwright:
             self._playwright = await async_playwright().start()
+        if not self._browser or not self._browser.is_connected():
+            self._browser = await self._playwright.chromium.launch(
+                headless=target_headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-infobars",
+                    "--lang=zh-CN",
+                ],
+            )
+        return self._browser
 
-        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(USER_DATA_DIR),
-            headless=target_headless,
-            user_agent=USER_AGENT,
-            viewport={"width": 1280, "height": 800},
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-infobars",
-                "--lang=zh-CN",
-            ],
-            ignore_default_args=["--enable-automation"],
-        )
-        self._context.set_default_timeout(PAGE_TIMEOUT_MS)
-        return self._context
+    async def get_context(self, headless: Optional[bool] = None) -> BrowserContext:
+        """创建注入反检测和登录态的 Context"""
+        browser = await self.get_browser(headless=headless)
+        kwargs = {
+            "user_agent": USER_AGENT,
+            "viewport": {"width": 1280, "height": 800},
+        }
+        if STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 10:
+            kwargs["storage_state"] = str(STORAGE_STATE_FILE)
+        context = await browser.new_context(**kwargs)
+        context.set_default_timeout(PAGE_TIMEOUT_MS)
+        return context
 
     async def new_page(self, headless: Optional[bool] = None) -> Page:
-        """创建注入了反检测脚本的新标签页"""
+        """创建注入了反检测脚本与登录态的新标签页"""
         context = await self.get_context(headless=headless)
         page = await context.new_page()
         await page.add_init_script(STEALTH_INIT_SCRIPT)
         return page
 
     async def close(self):
-        """关闭上下文与 Playwright 进程"""
-        if self._context:
+        """关闭浏览器与 Playwright 进程"""
+        if self._browser:
             try:
-                await self._context.close()
+                await self._browser.close()
             except Exception:
                 pass
-            self._context = None
+            self._browser = None
         if self._playwright:
             try:
                 await self._playwright.stop()

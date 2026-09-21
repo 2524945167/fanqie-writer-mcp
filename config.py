@@ -28,9 +28,9 @@ else:
 FANQIE_BASE_URL = "https://fanqienovel.com/main/writer"
 FANQIE_LOGIN_URL = f"{FANQIE_BASE_URL}/login"
 FANQIE_HOME_URL = f"{FANQIE_BASE_URL}/home"
-FANQIE_BOOK_LIST_URL = f"{FANQIE_BASE_URL}/book"
-FANQIE_CHAPTER_CREATE_URL = f"{FANQIE_BASE_URL}/book/{{book_id}}/chapter/create"
-FANQIE_BOOK_INFO_URL = f"{FANQIE_BASE_URL}/book/{{book_id}}/info"
+FANQIE_BOOK_LIST_URL = f"{FANQIE_BASE_URL}/book-manage"
+FANQIE_CHAPTER_CREATE_URL = f"{FANQIE_BASE_URL}/{{book_id}}/publish/"
+FANQIE_BOOK_INFO_URL = f"{FANQIE_BASE_URL}/book-info/{{book_id}}"
 
 # 浏览器设置
 DEFAULT_HEADLESS = os.getenv("FANQIE_HEADLESS", "true").lower() in ("1", "true", "yes")

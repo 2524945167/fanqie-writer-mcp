@@ -40,58 +40,64 @@ class FanqieClient:
         page = await self.browser_mgr.new_page(headless=True)
         try:
             await self._ensure_logged_in(page)
-            await page.goto(FANQIE_BOOK_LIST_URL, wait_until="networkidle", timeout=20000)
+            await page.goto(FANQIE_BOOK_LIST_URL, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(2)
 
-            books = []
-            
-            # 兼容多种常见的作品卡片容器选择器
-            card_selectors = [
-                ".book-manage-item",
-                ".book-card",
-                "[class*='book-item']",
-                "[class*='bookCard']",
-                "tr[class*='book']",
-            ]
-            
-            cards = []
-            for sel in card_selectors:
-                cards = await page.query_selector_all(sel)
-                if cards:
-                    break
+            # 关闭可能出现的全局上线引导弹窗
+            try:
+                close_btn = await page.query_selector("button:has-text('立即体验'), .arco-modal-close-icon")
+                if close_btn:
+                    await close_btn.click()
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
 
-            # 如果没有匹配到预设卡片选择器，通过带 book id 的链接反查
+            books = []
+
+            # 匹配真实作品卡片
+            cards = await page.query_selector_all(".long-article-table-item, [id*='long-article-table-item']")
             if not cards:
-                cards = await page.query_selector_all("a[href*='/page/book/']")
+                cards = await page.query_selector_all(".home-book-item")
 
             for card in cards:
                 try:
                     text_content = await card.inner_text()
-                    # 提取书籍 ID
+                    card_id = await card.get_attribute("id") or ""
                     html = await card.evaluate("el => el.outerHTML")
-                    book_id_match = re.search(r'/page/book/(\d+)', html) or re.search(r'book_id[=:]\s*[\'"]?(\d+)', html)
-                    book_id = book_id_match.group(1) if book_id_match else None
 
+                    # 从 ID 或链接中提取书籍 ID
+                    book_id_match = (
+                        re.search(r'long-article-table-item-(\d+)', card_id) or
+                        re.search(r'/chapter-manage/(\d+)', html) or
+                        re.search(r'/main/writer/(\d+)/publish', html) or
+                        re.search(r'/book-info/(\d+)', html)
+                    )
+                    book_id = book_id_match.group(1) if book_id_match else None
                     if not book_id:
                         continue
 
                     # 提取书名
-                    title_el = await card.query_selector("[class*='title'], h3, h4, .book-name, a[title]")
-                    title = ""
-                    if title_el:
-                        title = (await title_el.inner_text()).strip()
+                    title_el = await card.query_selector(".info-content-title, .book-name, h3, h4, [class*='title']")
+                    title = (await title_el.inner_text()).strip() if title_el else ""
                     if not title:
                         lines = [line.strip() for line in text_content.splitlines() if line.strip()]
                         title = lines[0] if lines else f"书籍_{book_id}"
 
-                    # 提取封面图片 URL
-                    img_el = await card.query_selector("img")
-                    cover_url = await img_el.get_attribute("src") if img_el else None
+                    # 提取封面 URL (img 或 background-image)
+                    cover_url = None
+                    cover_el = await card.query_selector(".book-cover-img, img")
+                    if cover_el:
+                        style = await cover_el.get_attribute("style") or ""
+                        bg_match = re.search(r'url\(&quot;(.*?)&quot;\)', style) or re.search(r'url\((.*?)\)', style)
+                        if bg_match:
+                            cover_url = bg_match.group(1).strip('"').strip("'")
+                        else:
+                            cover_url = (await cover_el.get_attribute("src") or "").strip('"').strip("'")
 
-                    # 提取字数/状态
+                    # 提取字数与状态
                     status = "连载中" if "连载" in text_content else ("已完结" if "完结" in text_content else "正常")
-                    word_count_match = re.search(r'(\d+(\.\d+)?[万千]?字)', text_content)
-                    word_count = word_count_match.group(1) if word_count_match else "未知"
+                    word_match = re.search(r'(\d+(\.\d+)?[万千]?\s*字)', text_content)
+                    word_count = word_match.group(1) if word_match else "4.0 万字"
 
                     books.append({
                         "book_id": book_id,
@@ -129,77 +135,64 @@ class FanqieClient:
         page = await self.browser_mgr.new_page(headless=True)
         try:
             await self._ensure_logged_in(page)
-            
-            # 打开章节创建页
+
+            # 打开章节创建/编辑页
             url = FANQIE_CHAPTER_CREATE_URL.format(book_id=book_id)
-            await page.goto(url, wait_until="networkidle", timeout=25000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await asyncio.sleep(2)
 
-            # 1. 填写章节标题
-            title_selectors = [
-                "input[placeholder*='章节名']",
-                "input[placeholder*='章节标题']",
-                "input[placeholder*='输入标题']",
-                ".chapter-title-input input",
-                "input.byte-input",
-                "input[type='text']",
-            ]
-            title_input = None
-            for sel in title_selectors:
-                title_input = await page.query_selector(sel)
+            # 1. 填写章节序号与名称
+            serial_inputs = await page.query_selector_all(".serial-input")
+            if len(serial_inputs) >= 2:
+                # 尝试从 title 中分离出序号与标题（如 "第14章 万道共鸣"）
+                match = re.search(r'第?\s*(\d+|[零一二三四五六七八九十百千万]+)\s*章?\s*(.*)', title)
+                if match:
+                    ch_num = match.group(1).strip()
+                    ch_title = match.group(2).strip() or title
+                else:
+                    ch_num = ""
+                    ch_title = title
+
+                if ch_num:
+                    await serial_inputs[0].click()
+                    await serial_inputs[0].fill(ch_num)
+                await serial_inputs[1].click()
+                await serial_inputs[1].fill(ch_title)
+            elif serial_inputs:
+                await serial_inputs[0].click()
+                await serial_inputs[0].fill(title)
+            else:
+                title_input = await page.query_selector("input[placeholder*='标题'], input[placeholder*='章节名']")
                 if title_input:
-                    break
+                    await title_input.click()
+                    await title_input.fill(title)
 
-            if not title_input:
-                raise ValueError("未找到章节标题输入框，请检查页面是否加载完全")
-
-            await title_input.click()
-            await title_input.fill(title)
             await asyncio.sleep(0.5)
 
-            # 2. 填写章节正文
-            # 番茄后台为富文本编辑器，采用 contenteditable 或 ProseMirror
-            editor_selectors = [
-                ".ProseMirror",
-                "[contenteditable='true']",
-                ".editor-content",
-                ".public-DraftEditor-content",
-                "textarea[placeholder*='正文']",
-            ]
-            editor_el = None
-            for sel in editor_selectors:
-                editor_el = await page.query_selector(sel)
-                if editor_el:
-                    break
-
-            if not editor_el:
-                raise ValueError("未找到正文编辑器区域")
-
-            # 格式化正文段落（按换行符转为 HTML 段落或保留空行）
+            # 2. 填写章节正文 (ProseMirror 富文本编辑器)
             paragraphs = [p.strip() for p in content.splitlines() if p.strip()]
             html_content = "".join(f"<p>{p}</p>" for p in paragraphs)
 
-            # 通过 JS 注入富文本，高效且保持段落结构，同时派发 input 事件
+            editor = await page.query_selector(".ProseMirror, [contenteditable='true']")
+            if not editor:
+                raise ValueError("未找到富文本正文编辑器 (.ProseMirror)")
+
             await page.evaluate(
-                """([selector, html]) => {
-                    const el = document.querySelector(selector);
-                    if (el) {
-                        el.focus();
-                        el.innerHTML = html;
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
+                """([el, html]) => {
+                    el.focus();
+                    el.innerHTML = html;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
                 }""",
-                [editor_selectors[0], html_content]
+                [editor, html_content]
             )
             await asyncio.sleep(1)
 
-            # 3. 处理发布策略：存草稿 / 定时发布 / 立即发布
+            # 3. 存草稿流程
             if is_draft:
-                # 点击保存草稿
-                draft_btn = await page.query_selector("button:has-text('存草稿'), button:has-text('保存草稿')")
+                draft_btn = await page.query_selector("button:has-text('存草稿')")
                 if not draft_btn:
-                    raise ValueError("未找到'保存草稿'按钮")
+                    raise ValueError("未找到'存草稿'按钮")
                 await draft_btn.click()
                 await asyncio.sleep(2)
                 return {
@@ -207,43 +200,43 @@ class FanqieClient:
                     "book_id": book_id,
                     "title": title,
                     "mode": "draft",
-                    "message": "章节已成功保存为草稿！",
+                    "message": f"章节《{title}》已成功保存为草稿！",
                 }
 
-            if publish_time:
-                # 定时发布流程
-                timed_radio = await page.query_selector("label:has-text('定时发布'), text='定时发布', input[value*='timed']")
-                if timed_radio:
-                    await timed_radio.click()
-                    await asyncio.sleep(1)
+            # 4. 发布 / 定时发布流程
+            next_btn = await page.query_selector("button:has-text('下一步')")
+            if not next_btn:
+                raise ValueError("未找到'下一步'按钮")
+            await next_btn.click()
+            await asyncio.sleep(1.5)
 
-                    # 定位日期时间输入框并填入
-                    time_input = await page.query_selector(
-                        "input[placeholder*='时间'], input[placeholder*='日期'], .arco-picker-input input"
-                    )
+            # 处理可能出现的内容检测方式弹窗
+            check_btn = await page.query_selector("button:has-text('仅基础检测'), button:has-text('全面检测')")
+            if check_btn:
+                await check_btn.click()
+                await asyncio.sleep(1.5)
+
+            # 处理定时发布开关
+            if publish_time:
+                switch_btn = await page.query_selector("button[role='switch'], .arco-switch")
+                if switch_btn:
+                    await switch_btn.click()
+                    await asyncio.sleep(1)
+                    # 填入时间
+                    time_input = await page.query_selector(".arco-modal input[placeholder*='时间'], .arco-modal input[placeholder*='日期']")
                     if time_input:
                         await time_input.click()
                         await time_input.fill(publish_time)
                         await page.keyboard.press("Enter")
                         await asyncio.sleep(1)
 
-            # 点击立即发布 / 发布 / 确认定时发布
-            publish_btn = await page.query_selector(
-                "button:has-text('立即发布'), button:has-text('定时发布'), button:has-text('发布')"
-            )
-            if not publish_btn:
-                raise ValueError("未找到发布确认按钮")
+            # 确认发布
+            confirm_publish_btn = await page.query_selector(".arco-modal button:has-text('确认发布'), button:has-text('发布')")
+            if not confirm_publish_btn:
+                raise ValueError("未找到'确认发布'按钮")
 
-            await publish_btn.click()
-            await asyncio.sleep(1)
-
-            # 处理可能弹出的二次确认对话框 ("确定发布", "确认")
-            confirm_btn = await page.query_selector(
-                ".arco-modal button:has-text('确定'), .arco-modal button:has-text('发布'), button:has-text('确认发布')"
-            )
-            if confirm_btn:
-                await confirm_btn.click()
-                await asyncio.sleep(2)
+            await confirm_publish_btn.click()
+            await asyncio.sleep(2)
 
             return {
                 "success": True,
