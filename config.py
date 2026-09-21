@@ -29,7 +29,9 @@ FANQIE_BASE_URL = "https://fanqienovel.com/main/writer"
 FANQIE_LOGIN_URL = f"{FANQIE_BASE_URL}/login"
 FANQIE_HOME_URL = f"{FANQIE_BASE_URL}/home"
 FANQIE_BOOK_LIST_URL = f"{FANQIE_BASE_URL}/book-manage"
+FANQIE_BOOK_CREATE_URL = f"{FANQIE_BASE_URL}/create?enter_from=book_manage"
 FANQIE_CHAPTER_CREATE_URL = f"{FANQIE_BASE_URL}/{{book_id}}/publish/"
+FANQIE_CHAPTER_MANAGE_URL = f"{FANQIE_BASE_URL}/chapter-manage/{{book_id}}"
 FANQIE_BOOK_INFO_URL = f"{FANQIE_BASE_URL}/book-info/{{book_id}}"
 
 # 浏览器设置

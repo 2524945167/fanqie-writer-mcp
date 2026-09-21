@@ -31,6 +31,9 @@ ENV/
 *.png
 *.jpg
 *.jpeg
+tests/*.png
+tests/*.json
+tests/*.txt
 
 # 本地日志与产物
 outputs/

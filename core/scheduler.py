@@ -104,6 +104,61 @@ class ChapterScheduler:
         return chapters
 
     @staticmethod
+    def parse_from_volume_directory(dir_path: Union[str, Path]) -> List[Dict[str, Any]]:
+        """从按分卷组织的根目录读取所有章节（支持 '卷一_xxx' 等分卷子目录）"""
+        path = Path(dir_path)
+        if not path.is_dir():
+            raise FileNotFoundError(f"指定的小说分卷目录不存在: {dir_path}")
+
+        subdirs = [d for d in path.iterdir() if d.is_dir()]
+        if not subdirs:
+            single_chaps = ChapterScheduler.parse_from_directory(dir_path)
+            for c in single_chaps:
+                c["volume_name"] = None
+            return single_chaps
+
+        def vol_sort_key(d: Path) -> int:
+            m = re.search(r'卷([一二三四五六七八九十]+|\d+)', d.name)
+            cn_nums = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+            if m:
+                val = m.group(1)
+                return cn_nums.get(val, int(val) if val.isdigit() else 999)
+            return 999
+
+        subdirs.sort(key=vol_sort_key)
+        all_chapters = []
+
+        for v_dir in subdirs:
+            vol_clean_name = v_dir.name.split("_", 1)[-1] if "_" in v_dir.name else v_dir.name
+            files = [
+                f for f in v_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in ('.txt', '.md')
+            ]
+            files.sort(key=lambda f: (extract_chapter_sort_key(f.stem), f.stem))
+
+            for file in files:
+                try:
+                    content = file.read_text(encoding='utf-8').strip()
+                except UnicodeDecodeError:
+                    content = file.read_text(encoding='gb18030', errors='ignore').strip()
+
+                title = file.stem
+                lines = content.splitlines()
+                if lines and re.match(r'^(第[0-9一二三四五六七八九十百千万]+[章回节卷集幕篇部].*)$', lines[0].strip()):
+                    title = lines[0].strip()
+                    content = "\n".join(lines[1:]).strip()
+
+                all_chapters.append({
+                    "title": title,
+                    "content": content,
+                    "volume_name": vol_clean_name,
+                    "volume_dir": v_dir.name,
+                    "source_file": str(file)
+                })
+
+        return all_chapters
+
+    @staticmethod
     def parse_from_single_file(file_path: Union[str, Path]) -> List[Dict[str, str]]:
         """从单个全本小说文本中切分出各章节"""
         path = Path(file_path)

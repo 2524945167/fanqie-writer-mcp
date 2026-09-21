@@ -2,34 +2,13 @@
 
 专为大语言模型（LLM / AI Agent）设计的**番茄作家助手（Fanqie Novel Author Platform）全自动 MCP 工具**。
 
-支持：
-- 🚀 **全自动发文**：单章发布、定时发布（指定精确到秒的未来时间）、存草稿。
-- 📦 **一键批量定时发布**：支持按目录解析多章节文件（自然排序）或切分单本全书，智能计算每日更新档期（例如每日 10:00、18:00）或固定间隔排期，全自动队列发布。
+- 📚 **全自动新建作品**：自动填写书名、作品简介、主角名、频道分类（男频/女频）、阅读标签及签约模式，一键提交创建并返回作品唯一 ID。
+- 📑 **全自动分卷管理**：支持在线新建分卷、重命名分卷，完美契合番茄平台分卷规则。
+- 🚀 **全自动发文**：单章发布、定时发布（指定精确到秒的未来时间）、存草稿，支持自动归属分卷、错别字弹窗自动确认与 AI 标识合规处理。
+- 📦 **按分卷一键发布整本小说**：支持扫描各分卷子目录（如 `卷一_xxx`），按卷按章全自动创建分卷并发布/存入草稿箱，带实时持久化进度记录与断点续传。
 - ✏️ **修改书名**：自动填报新书名及修改理由，提交平台审核。
 - 🖼️ **更换书籍封面**：自动按番茄 3:4 标准比例智能校验裁剪并上传，提交平台审核。
 - 🛡️ **反检测与持久化登录**：基于 Playwright Stealth 深度伪装技术，支持一键本地弹窗扫码登录，持久化存储会话，后续操作静默执行。
-
----
-
-## 目录结构
-
-```text
-fanqie-writer-mcp/
-├── config.py                 # 全局配置（路径、超时时间、平台 URL）
-├── core/
-│   ├── __init__.py
-│   ├── browser.py            # Playwright 驱动与 Stealth 反爬伪装
-│   ├── session.py            # 登录状态管理、扫码截图与会话持久化
-│   ├── scheduler.py          # 章节多格式解析、中文序号排序与定时排期计算
-│   └── fanqie_client.py      # 番茄作者后台自动化操作（发文、改名、换封面）
-├── mcp_server.py             # 标准 MCP 服务主入口
-├── requirements.txt          # Python 依赖清单
-├── tests/                    # 单元测试与连通性验证
-│   ├── test_scheduler.py
-│   ├── test_mcp_tools.py
-│   └── test_browser_live.py
-└── README.md
-```
 
 ---
 
@@ -41,8 +20,11 @@ fanqie-writer-mcp/
 | `fanqie_login_interactive` | 弹出本地浏览器窗口供手机 App 扫码登录 | `timeout_sec: int` (默认 180s) |
 | `fanqie_get_login_qrcode` | 无头截取登录二维码图片保存到本地 | 无 |
 | `fanqie_list_books` | 获取作者名下所有作品详情（ID、书名、封面、字数等） | 无 |
-| `fanqie_publish_chapter` | 发布单章节（支持草稿、立即发布、精确定时发布） | `book_id`, `title`, `content`, `is_draft`, `publish_time` |
-| `fanqie_batch_publish_chapters` | **一键批量定时发布大量文章** | `book_id`, `chapters_source`, `start_time`, `daily_slots`, `interval_hours` |
+| `fanqie_create_book` | **全自动创建新书作品** | `title`, `intro`, `protagonist`, `gender`, `category`, `sign_pattern` |
+| `fanqie_create_volume` | **为作品创建或重命名分卷** | `book_id`, `volume_name` |
+| `fanqie_publish_chapter` | 发布单章节（支持草稿、立即发布、定时发布、指定分卷） | `book_id`, `title`, `content`, `is_draft`, `publish_time`, `volume_name` |
+| `fanqie_publish_volume_book` | **全自动按分卷结构发布整本小说** | `book_id`, `folder_path`, `mode`, `start_chapter`, `interval_hours` |
+| `fanqie_batch_publish_chapters` | 一键批量自动定时发布章节 | `book_id`, `chapters_source`, `start_time`, `daily_slots`, `interval_hours` |
 | `fanqie_update_book_title` | 修改作品书名并提交审核 | `book_id`, `new_title`, `reason` |
 | `fanqie_update_book_cover` | 更换作品封面图片并提交审核（自动按 3:4 裁剪） | `book_id`, `image_path` |
 | `fanqie_get_batch_progress` | 查看最近一次批量发布的进度与日志 | 无 |

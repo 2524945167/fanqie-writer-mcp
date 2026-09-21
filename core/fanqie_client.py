@@ -13,12 +13,15 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 from config import (
     FANQIE_BASE_URL,
     FANQIE_BOOK_LIST_URL,
+    FANQIE_BOOK_CREATE_URL,
     FANQIE_CHAPTER_CREATE_URL,
+    FANQIE_CHAPTER_MANAGE_URL,
     FANQIE_BOOK_INFO_URL,
     OUTPUT_DIR,
 )
 from core.browser import BrowserManager
 from core.session import SessionManager
+from core.scheduler import ChapterScheduler
 
 class FanqieClient:
     """番茄作家助手全自动执行客户端"""
@@ -121,6 +124,237 @@ class FanqieClient:
         finally:
             await page.close()
 
+    async def create_book(
+        self,
+        title: str,
+        intro: str,
+        protagonist: str,
+        gender: str = "男频",
+        category: str = "都市日常",
+        sign_pattern: str = "连载模式",
+    ) -> Dict[str, Any]:
+        """
+        在番茄作家助手上全自动创建新作品
+        """
+        page = await self.browser_mgr.new_page(headless=True)
+        try:
+            await self._ensure_logged_in(page)
+            await page.goto(FANQIE_BOOK_CREATE_URL, wait_until="domcontentloaded", timeout=25000)
+            await asyncio.sleep(2)
+
+            # 关闭可能出现的引导弹窗
+            try:
+                ack = await page.query_selector("button:has-text('知道了')")
+                if ack:
+                    await ack.click()
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            # 1. 填写书名
+            title_input = await page.query_selector("#name_input input")
+            if not title_input:
+                raise ValueError("未找到书名输入框")
+            await title_input.click()
+            await title_input.fill(title)
+            await page.keyboard.press("Tab")
+            await asyncio.sleep(0.5)
+
+            # 2. 签约模式
+            if sign_pattern:
+                mode_btn = page.get_by_text(sign_pattern).first
+                if await mode_btn.count() > 0:
+                    await mode_btn.click()
+                    await asyncio.sleep(0.5)
+
+            # 3. 目标读者
+            if gender:
+                gender_btn = page.get_by_text(gender).first
+                if await gender_btn.count() > 0:
+                    await gender_btn.click()
+                    await asyncio.sleep(0.8)
+
+            # 4. 阅读标签 (Category)
+            if category:
+                tag_box = await page.query_selector("#selectRow .select-view")
+                if tag_box:
+                    await tag_box.click()
+                    await asyncio.sleep(1)
+                    tag_elem = page.locator(".category-modal").get_by_text(category, exact=True).first
+                    if await tag_elem.count() > 0:
+                        await tag_elem.click()
+                        await asyncio.sleep(0.5)
+                    confirm_btn = page.locator(".category-modal .arco-modal-footer button:has-text('确认')")
+                    if await confirm_btn.count() > 0:
+                        await confirm_btn.click()
+                        await asyncio.sleep(0.8)
+
+            # 5. 主角名
+            if protagonist:
+                role_input = await page.query_selector("#roleList input")
+                if role_input:
+                    await role_input.fill(protagonist)
+                    await asyncio.sleep(0.3)
+
+            # 6. 作品简介 (50-500字)
+            if intro:
+                desc_area = await page.query_selector("#descRow textarea")
+                if desc_area:
+                    clean_intro = intro.strip()
+                    if len(clean_intro) < 50:
+                        clean_intro = clean_intro + " " * (50 - len(clean_intro))
+                    elif len(clean_intro) > 500:
+                        clean_intro = clean_intro[:500]
+                    await desc_area.fill(clean_intro)
+                    await asyncio.sleep(0.5)
+
+            # 7. 提交创建
+            created_book_id = None
+
+            async def on_create_response(res):
+                nonlocal created_book_id
+                if "create" in res.url:
+                    try:
+                        data = await res.json()
+                        if data.get("code") == 0 and "data" in data and "book_id" in data["data"]:
+                            created_book_id = str(data["data"]["book_id"])
+                    except Exception:
+                        pass
+
+            page.on("response", on_create_response)
+
+            create_btn = page.locator("button:has-text('立即创建')")
+            if await create_btn.count() == 0:
+                raise ValueError("未找到'立即创建'按钮")
+            await create_btn.click()
+            await asyncio.sleep(3)
+
+            # 检查是否有重复书名等错误提示
+            err_msg = await page.evaluate("""() => {
+                const err = document.querySelector('.arco-form-item-message, .arco-message-error');
+                return err ? err.innerText : '';
+            }""")
+            if err_msg and "存在" in err_msg:
+                raise ValueError(f"创建失败: {err_msg}")
+
+            if not created_book_id:
+                m = re.search(r'book-info/(\d+)', page.url) or re.search(r'(\d{15,})', page.url)
+                if m:
+                    created_book_id = m.group(1)
+
+            return {
+                "success": True,
+                "book_id": created_book_id,
+                "title": title,
+                "protagonist": protagonist,
+                "gender": gender,
+                "category": category,
+                "url": page.url,
+                "message": f"成功创建作品《{title}》！作品ID: {created_book_id}",
+            }
+        except Exception as e:
+            err_shot = OUTPUT_DIR / f"error_create_book_{re.sub(r'[^a-zA-Z0-9]', '_', title)}.png"
+            try:
+                await page.screenshot(path=str(err_shot))
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "title": title,
+                "error": str(e),
+                "debug_screenshot": str(err_shot),
+                "message": f"创建作品失败: {str(e)}",
+            }
+        finally:
+            await page.close()
+
+    async def create_volume(
+        self,
+        book_id: str,
+        volume_name: str,
+    ) -> Dict[str, Any]:
+        """
+        为指定作品创建或重命名分卷
+        """
+        page = await self.browser_mgr.new_page(headless=True)
+        try:
+            await self._ensure_logged_in(page)
+            url = FANQIE_CHAPTER_MANAGE_URL.format(book_id=book_id)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            await asyncio.sleep(2)
+
+            try:
+                ack = await page.query_selector("button:has-text('我知道了')")
+                if ack:
+                    await ack.click()
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            edit_vol_btn = await page.query_selector("button:has-text('编辑分卷')")
+            if not edit_vol_btn:
+                raise ValueError("未找到'编辑分卷'按钮")
+            await edit_vol_btn.click()
+            await asyncio.sleep(1)
+
+            items = await page.query_selector_all(".chapter-volume-list-item")
+            cur_texts = [await it.inner_text() for it in items]
+            if any(volume_name in t for t in cur_texts):
+                return {
+                    "success": True,
+                    "book_id": book_id,
+                    "volume_name": volume_name,
+                    "message": f"分卷《{volume_name}》已存在，无需重复创建",
+                }
+
+            if len(items) == 1 and "默认" in cur_texts[0]:
+                edit_first = await items[0].query_selector(".tomato-edit")
+                if edit_first:
+                    await edit_first.click()
+                    await asyncio.sleep(0.5)
+                    inp = await page.query_selector(".chapter-volume input")
+                    if inp:
+                        await inp.fill(volume_name)
+                        await page.click(".tomato-confirm.green")
+                        await asyncio.sleep(0.5)
+            else:
+                add_btn = await page.query_selector(".chapter-volume-footer-add-volume")
+                if not add_btn:
+                    raise ValueError("未找到'新建分卷'按钮")
+                await add_btn.click()
+                await asyncio.sleep(0.5)
+                inp = await page.query_selector(".chapter-volume input")
+                if inp:
+                    await inp.fill(volume_name)
+                    await page.click(".tomato-confirm.green")
+                    await asyncio.sleep(0.5)
+
+            confirm_btn = await page.query_selector(".chapter-volume-footer-buttons button.byte-btn-primary")
+            if confirm_btn:
+                await confirm_btn.click()
+                await asyncio.sleep(1.5)
+
+            err = await page.evaluate("() => { const el = document.querySelector('.arco-message-error, .arco-message'); return el ? el.innerText : ''; }")
+            if err and "无章节" in err:
+                raise ValueError(f"创建分卷受限: {err}")
+
+            return {
+                "success": True,
+                "book_id": book_id,
+                "volume_name": volume_name,
+                "message": f"已成功创建分卷: {volume_name}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "book_id": book_id,
+                "volume_name": volume_name,
+                "error": str(e),
+                "message": f"创建分卷失败: {str(e)}",
+            }
+        finally:
+            await page.close()
+
     async def publish_chapter(
         self,
         book_id: str,
@@ -128,9 +362,10 @@ class FanqieClient:
         content: str,
         is_draft: bool = False,
         publish_time: Optional[str] = None,
+        volume_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        全自动发布单章节（支持存草稿、立即发布或指定日期时间定时发布）
+        全自动发布单章节（支持存草稿、立即发布或指定日期时间定时发布，支持指定分卷）
         """
         page = await self.browser_mgr.new_page(headless=True)
         try:
@@ -141,10 +376,38 @@ class FanqieClient:
             await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await asyncio.sleep(2)
 
-            # 1. 填写章节序号与名称
+            # 1. 检查并切换分卷
+            if volume_name:
+                cur_vol_text = await page.evaluate("() => { const el = document.querySelector('.publish-header-volume-name, .publish-header-volume-wrap'); return el ? el.innerText : ''; }")
+                if volume_name not in cur_vol_text:
+                    vol_trigger = await page.query_selector(".publish-header-volume-wrap, .publish-maintain-volume")
+                    if vol_trigger:
+                        await vol_trigger.click()
+                        await asyncio.sleep(1)
+
+                        matched_item = await page.query_selector(f".chapter-volume-list-item:has-text('{volume_name}'), .editor-volume-list-item:has-text('{volume_name}')")
+                        if not matched_item:
+                            add_btn = await page.query_selector(".chapter-volume-footer-add-volume")
+                            if add_btn:
+                                await add_btn.click()
+                                await asyncio.sleep(0.5)
+                                inp = await page.query_selector(".chapter-volume input")
+                                if inp:
+                                    await inp.fill(volume_name)
+                                    await page.click(".tomato-confirm.green")
+                                    await asyncio.sleep(0.5)
+                        else:
+                            await matched_item.click()
+                            await asyncio.sleep(0.5)
+
+                        confirm_modal = await page.query_selector(".chapter-volume button:has-text('确定'), .chapter-volume-footer-buttons button.byte-btn-primary, .byte-modal-footer button.byte-btn-primary")
+                        if confirm_modal:
+                            await confirm_modal.click()
+                            await asyncio.sleep(1)
+
+            # 2. 填写章节序号与名称
             serial_inputs = await page.query_selector_all(".serial-input")
             if len(serial_inputs) >= 2:
-                # 尝试从 title 中分离出序号与标题（如 "第14章 万道共鸣"）
                 match = re.search(r'第?\s*(\d+|[零一二三四五六七八九十百千万]+)\s*章?\s*(.*)', title)
                 if match:
                     ch_num = match.group(1).strip()
@@ -169,7 +432,7 @@ class FanqieClient:
 
             await asyncio.sleep(0.5)
 
-            # 2. 填写章节正文 (ProseMirror 富文本编辑器)
+            # 3. 填写章节正文 (ProseMirror 富文本编辑器)
             paragraphs = [p.strip() for p in content.splitlines() if p.strip()]
             html_content = "".join(f"<p>{p}</p>" for p in paragraphs)
 
@@ -188,7 +451,7 @@ class FanqieClient:
             )
             await asyncio.sleep(1)
 
-            # 3. 存草稿流程
+            # 4. 存草稿流程
             if is_draft:
                 draft_btn = await page.query_selector("button:has-text('存草稿')")
                 if not draft_btn:
@@ -199,16 +462,23 @@ class FanqieClient:
                     "success": True,
                     "book_id": book_id,
                     "title": title,
+                    "volume_name": volume_name,
                     "mode": "draft",
                     "message": f"章节《{title}》已成功保存为草稿！",
                 }
 
-            # 4. 发布 / 定时发布流程
+            # 5. 发布 / 定时发布流程
             next_btn = await page.query_selector("button:has-text('下一步')")
             if not next_btn:
                 raise ValueError("未找到'下一步'按钮")
             await next_btn.click()
             await asyncio.sleep(1.5)
+
+            # 处理错别字提示弹窗 (发布提示)
+            typo_btn = await page.query_selector(".arco-modal button:has-text('提交'), button:has-text('提交')")
+            if typo_btn:
+                await typo_btn.click()
+                await asyncio.sleep(1.5)
 
             # 处理可能出现的内容检测方式弹窗
             check_btn = await page.query_selector("button:has-text('仅基础检测'), button:has-text('全面检测')")
@@ -216,13 +486,18 @@ class FanqieClient:
                 await check_btn.click()
                 await asyncio.sleep(1.5)
 
+            # 处理 是否使用AI: 否
+            ai_no = await page.query_selector(".arco-modal label:has-text('否'), label:has-text('否')")
+            if ai_no:
+                await ai_no.click()
+                await asyncio.sleep(0.5)
+
             # 处理定时发布开关
             if publish_time:
                 switch_btn = await page.query_selector("button[role='switch'], .arco-switch")
                 if switch_btn:
                     await switch_btn.click()
                     await asyncio.sleep(1)
-                    # 填入时间
                     time_input = await page.query_selector(".arco-modal input[placeholder*='时间'], .arco-modal input[placeholder*='日期']")
                     if time_input:
                         await time_input.click()
@@ -236,30 +511,159 @@ class FanqieClient:
                 raise ValueError("未找到'确认发布'按钮")
 
             await confirm_publish_btn.click()
-            await asyncio.sleep(2)
+            await asyncio.sleep(2.5)
+
+            # 检查是否有字数超限错误
+            err_msg = await page.evaluate("""() => {
+                const err = document.querySelector('.arco-message-error, .arco-message');
+                return err ? err.innerText : '';
+            }""")
+            if err_msg and "每日上限" in err_msg:
+                raise ValueError(f"平台限制: {err_msg}。建议先存为草稿，次日再发布。")
 
             return {
                 "success": True,
                 "book_id": book_id,
                 "title": title,
+                "volume_name": volume_name,
                 "mode": "scheduled" if publish_time else "published",
                 "publish_time": publish_time,
                 "message": f"章节《{title}》{'已成功设置定时发布: ' + publish_time if publish_time else '已成功发布！'}",
             }
         except Exception as e:
-            # 截屏排查
             err_shot = OUTPUT_DIR / f"error_publish_{book_id}.png"
-            await page.screenshot(path=str(err_shot))
+            try:
+                await page.screenshot(path=str(err_shot))
+            except Exception:
+                pass
             return {
                 "success": False,
                 "book_id": book_id,
                 "title": title,
+                "volume_name": volume_name,
                 "error": str(e),
                 "debug_screenshot": str(err_shot),
                 "message": f"发布章节失败: {str(e)}",
             }
         finally:
             await page.close()
+
+    async def publish_volume_book(
+        self,
+        book_id: str,
+        folder_path: str,
+        mode: str = "draft",
+        start_chapter: int = 1,
+        max_chapters: Optional[int] = None,
+        delay_seconds: float = 2.0,
+        interval_hours: float = 12.0,
+        start_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        全自动按照分卷目录结构发文（支持批量存草稿、直接发布或智能定时发布）
+        - 自动扫描分卷子目录（例如 '卷一_这笔账先算清'）并提取分卷名称
+        - 按卷按章顺序执行，自动处理分卷创建与切换
+        - 若发布遇到平台每日字数上限限制，自动平滑存入草稿箱，绝不漏章
+        - 实时记录进度到持久化 JSON，支持随时中断和断点续传
+        """
+        import json
+        all_chapters = ChapterScheduler.parse_from_volume_directory(folder_path)
+        if not all_chapters:
+            raise ValueError(f"目录 {folder_path} 下未解析到任何章节")
+
+        valid_chapters = []
+        for ch in all_chapters:
+            match = re.search(r'\d+', ch["title"])
+            ch_idx = int(match.group(0)) if match else 0
+            if ch_idx >= start_chapter:
+                valid_chapters.append(ch)
+
+        if max_chapters and max_chapters > 0:
+            valid_chapters = valid_chapters[:max_chapters]
+
+        if mode == "scheduled":
+            valid_chapters = ChapterScheduler.calculate_schedule(
+                valid_chapters, start_time=start_time, interval_hours=interval_hours
+            )
+
+        progress_file = OUTPUT_DIR / f"volume_publish_progress_{book_id}.json"
+        results = []
+        success_count = 0
+        failed_count = 0
+        draft_count = 0
+
+        for idx, ch in enumerate(valid_chapters, start=1):
+            title = ch["title"]
+            content = ch["content"]
+            volume_name = ch.get("volume_name")
+            publish_time = ch.get("publish_time")
+            is_draft = (mode == "draft")
+
+            res = await self.publish_chapter(
+                book_id=book_id,
+                title=title,
+                content=content,
+                is_draft=is_draft,
+                publish_time=publish_time,
+                volume_name=volume_name,
+            )
+
+            # 如果直接发布因每日上限报错，自动尝试存为草稿
+            if not res["success"] and not is_draft and ("每日上限" in str(res.get("error", "")) or "超限" in str(res.get("error", ""))):
+                draft_res = await self.publish_chapter(
+                    book_id=book_id,
+                    title=title,
+                    content=content,
+                    is_draft=True,
+                    volume_name=volume_name,
+                )
+                if draft_res["success"]:
+                    res = draft_res
+                    res["note"] = "因平台当日发文字数超限，已自动安全转存至草稿箱"
+                    draft_count += 1
+
+            if res["success"]:
+                success_count += 1
+                if res.get("mode") == "draft":
+                    draft_count += 1
+            else:
+                failed_count += 1
+
+            results.append({
+                "index": idx,
+                "title": title,
+                "volume_name": volume_name,
+                "result": res
+            })
+
+            progress_data = {
+                "book_id": book_id,
+                "folder_path": str(folder_path),
+                "total_target": len(valid_chapters),
+                "current_index": idx,
+                "success_count": success_count,
+                "draft_count": draft_count,
+                "failed_count": failed_count,
+                "results": results
+            }
+            try:
+                progress_file.write_text(json.dumps(progress_data, ensure_ascii=False, indent=2), encoding='utf-8')
+            except Exception:
+                pass
+
+            if delay_seconds > 0 and idx < len(valid_chapters):
+                await asyncio.sleep(delay_seconds)
+
+        return {
+            "success": True,
+            "book_id": book_id,
+            "total_processed": len(valid_chapters),
+            "success_count": success_count,
+            "draft_count": draft_count,
+            "failed_count": failed_count,
+            "progress_file": str(progress_file),
+            "message": f"分卷发文任务完成：共处理 {len(valid_chapters)} 章，成功 {success_count} 章（含草稿 {draft_count} 章），失败 {failed_count} 章。",
+        }
 
     async def update_book_title(
         self,

@@ -67,27 +67,71 @@ async def fanqie_list_books() -> str:
     return json.dumps({"count": len(books), "books": books}, ensure_ascii=False, indent=2)
 
 @mcp.tool()
+async def fanqie_create_book(
+    title: str,
+    intro: str,
+    protagonist: str,
+    gender: str = "男频",
+    category: str = "都市日常",
+    sign_pattern: str = "连载模式"
+) -> str:
+    """
+    在番茄作家助手上全自动创建一本新书。
+    - title: 书本名称（不超过15字）
+    - intro: 作品简介（50-500字）
+    - protagonist: 主角名称（不超过5字）
+    - gender: 目标读者性别（'男频' 或 '女频'，默认 '男频'）
+    - category: 阅读标签分类（如 '都市日常'、'都市脑洞'、'传统玄幻' 等，默认 '都市日常'）
+    - sign_pattern: 签约模式（'连载模式' 或 '完本模式'，默认 '连载模式'）
+    """
+    res = await fanqie_client.create_book(
+        title=title,
+        intro=intro,
+        protagonist=protagonist,
+        gender=gender,
+        category=category,
+        sign_pattern=sign_pattern
+    )
+    return json.dumps(res, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+async def fanqie_create_volume(
+    book_id: str,
+    volume_name: str
+) -> str:
+    """
+    为指定作品创建或重命名分卷。
+    - book_id: 书籍唯一 ID
+    - volume_name: 分卷名称（如 '这笔账先算清'，无需输入'第X卷：'前缀）
+    """
+    res = await fanqie_client.create_volume(book_id=book_id, volume_name=volume_name)
+    return json.dumps(res, ensure_ascii=False, indent=2)
+
+@mcp.tool()
 async def fanqie_publish_chapter(
     book_id: str,
     title: str,
     content: str,
     is_draft: bool = False,
-    publish_time: Optional[str] = None
+    publish_time: Optional[str] = None,
+    volume_name: Optional[str] = None
 ) -> str:
     """
-    全自动发布单章节或设置定时发布。
+    全自动发布单章节（支持存草稿、定时发布、立即发布，支持指定分卷）。
     - book_id: 书籍唯一 ID
     - title: 章节名称（如：'第1章 惊变'）
-    - content: 章节正文文本
+    - content: 章节正文文本（>1000字）
     - is_draft: 是否仅存为草稿（默认 False）
     - publish_time: 定时发布时间，格式如 '2026-09-22 12:00:00'。若不传则立即发布。
+    - volume_name: 分卷名称，若指定则自动归入该分卷
     """
     res = await fanqie_client.publish_chapter(
         book_id=book_id,
         title=title,
         content=content,
         is_draft=is_draft,
-        publish_time=publish_time
+        publish_time=publish_time,
+        volume_name=volume_name
     )
     return json.dumps(res, ensure_ascii=False, indent=2)
 
@@ -195,6 +239,40 @@ async def fanqie_batch_publish_chapters(
         "failed_items": failed_items,
         "message": f"批量处理完成！成功: {success_count}/{total}"
     }, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+async def fanqie_publish_volume_book(
+    book_id: str,
+    folder_path: str,
+    mode: str = "draft",
+    start_chapter: int = 1,
+    max_chapters: Optional[int] = None,
+    delay_seconds: float = 2.0,
+    interval_hours: float = 12.0,
+    start_time: Optional[str] = None
+) -> str:
+    """
+    全自动按分卷结构扫描并发布整本小说（支持自动创建与切换分卷）。
+    - book_id: 书籍唯一 ID
+    - folder_path: 包含各分卷子目录的根文件夹路径（如 'D:\\AI-Outputs\\...\\分卷章节TXT'）
+    - mode: 模式：'draft'（默认推荐，整本安全保存到草稿箱）、'publish'（直接发布并提交审核）、'scheduled'（自动按间隔排期定时发布）
+    - start_chapter: 起始章节序号（默认从第 1 章开始）
+    - max_chapters: 最大处理章节数（默认不限，处理至全本结束）
+    - delay_seconds: 每章发布间隔等待秒数（默认 2 秒）
+    - interval_hours: 定时发布模式下每章间隔小时数（默认 12 小时）
+    - start_time: 定时发布模式下首章开始时间（如 '2026-09-22 10:00:00'）
+    """
+    res = await fanqie_client.publish_volume_book(
+        book_id=book_id,
+        folder_path=folder_path,
+        mode=mode,
+        start_chapter=start_chapter,
+        max_chapters=max_chapters,
+        delay_seconds=delay_seconds,
+        interval_hours=interval_hours,
+        start_time=start_time
+    )
+    return json.dumps(res, ensure_ascii=False, indent=2)
 
 @mcp.tool()
 async def fanqie_update_book_title(
