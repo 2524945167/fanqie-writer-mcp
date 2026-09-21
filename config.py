@@ -25,12 +25,12 @@ else:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 平台 URL 定义
-FANQIE_BASE_URL = "https://author.fanqienovel.com"
+FANQIE_BASE_URL = "https://fanqienovel.com/main/writer"
 FANQIE_LOGIN_URL = f"{FANQIE_BASE_URL}/login"
-FANQIE_HOME_URL = f"{FANQIE_BASE_URL}/page/home"
-FANQIE_BOOK_LIST_URL = f"{FANQIE_BASE_URL}/page/book"
-FANQIE_CHAPTER_CREATE_URL = f"{FANQIE_BASE_URL}/page/book/{{book_id}}/chapter/create"
-FANQIE_BOOK_INFO_URL = f"{FANQIE_BASE_URL}/page/book/{{book_id}}/info"
+FANQIE_HOME_URL = f"{FANQIE_BASE_URL}/home"
+FANQIE_BOOK_LIST_URL = f"{FANQIE_BASE_URL}/book"
+FANQIE_CHAPTER_CREATE_URL = f"{FANQIE_BASE_URL}/book/{{book_id}}/chapter/create"
+FANQIE_BOOK_INFO_URL = f"{FANQIE_BASE_URL}/book/{{book_id}}/info"
 
 # 浏览器设置
 DEFAULT_HEADLESS = os.getenv("FANQIE_HEADLESS", "true").lower() in ("1", "true", "yes")

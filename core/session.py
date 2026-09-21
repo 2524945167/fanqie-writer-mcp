@@ -33,7 +33,8 @@ class SessionManager:
             should_close = True
 
         try:
-            await page.goto(FANQIE_HOME_URL, wait_until="networkidle", timeout=15000)
+            await page.goto(FANQIE_HOME_URL, wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(1.5)
             current_url = page.url
 
             # 若被重定向到 login 页面说明未登录
@@ -53,6 +54,7 @@ class SessionManager:
                 ".arco-avatar + span",
                 ".semi-avatar + span",
                 "span[class*='name']",
+                "[class*='author']",
             ]
             for sel in author_selectors:
                 try:
@@ -74,6 +76,7 @@ class SessionManager:
             # 尝试访问作品列表页作兜底检测
             try:
                 await page.goto(FANQIE_BOOK_LIST_URL, wait_until="domcontentloaded", timeout=10000)
+                await asyncio.sleep(1)
                 if "/login" not in page.url:
                     return {
                         "logged_in": True,
@@ -85,7 +88,7 @@ class SessionManager:
             return {
                 "logged_in": False,
                 "author_name": None,
-                "message": f"登录态检测失败或网络超时: {str(e)}",
+                "message": f"登录态检测失败: {str(e)}",
             }
         finally:
             if should_close:
@@ -100,14 +103,24 @@ class SessionManager:
         page = await self.browser_mgr.new_page(headless=False)
 
         try:
-            await page.goto(FANQIE_LOGIN_URL, wait_until="domcontentloaded")
-            print(f"请在弹出的浏览器窗口中完成番茄作家助手登录（限时 {timeout_sec} 秒）...")
+            await page.goto(FANQIE_LOGIN_URL, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(1)
 
-            # 等待跳转至管理后台页面（例如 /page/home 或 /page/book）
+            # 自动切换到“扫码登录”选项卡
+            try:
+                qr_tab = await page.query_selector("text='扫码登录'")
+                if qr_tab:
+                    await qr_tab.click()
+            except Exception:
+                pass
+
+            print(f"请在弹出的浏览器窗口中完成番茄作家助手扫码登录（限时 {timeout_sec} 秒）...")
+
+            # 等待跳转至管理后台页面（例如 /home 或 /book）
             for _ in range(timeout_sec):
                 await asyncio.sleep(1)
                 current_url = page.url
-                if "/page/" in current_url and "/login" not in current_url:
+                if "/login" not in current_url and ("fanqienovel.com/main/writer" in current_url or "/page/" in current_url):
                     # 登录成功，提取信息
                     status = await self.check_login_status(page=page)
                     # 保存 storage_state
@@ -122,7 +135,7 @@ class SessionManager:
             return {
                 "success": False,
                 "author_name": None,
-                "message": "登录超时，未在指定时间内完成登录",
+                "message": "登录超时，未在指定时间内完成扫码登录",
             }
         except Exception as e:
             return {
@@ -141,8 +154,17 @@ class SessionManager:
         """
         page = await self.browser_mgr.new_page(headless=True)
         try:
-            await page.goto(FANQIE_LOGIN_URL, wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(2)
+            await page.goto(FANQIE_LOGIN_URL, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(1)
+
+            # 自动切换到“扫码登录”选项卡
+            try:
+                qr_tab = await page.query_selector("text='扫码登录'")
+                if qr_tab:
+                    await qr_tab.click()
+                    await asyncio.sleep(1)
+            except Exception:
+                pass
 
             # 寻找二维码图片或容器元素
             qrcode_selectors = [
@@ -171,7 +193,7 @@ class SessionManager:
             return {
                 "success": True,
                 "qrcode_path": str(target_path),
-                "message": f"登录二维码已保存至: {target_path}。请使用番茄作家助手或抖音扫描后，调用 fanqie_check_status 验证。",
+                "message": f"登录二维码已保存至: {target_path}。请使用番茄小说或番茄作家助手扫码后验证。",
             }
         except Exception as e:
             return {
