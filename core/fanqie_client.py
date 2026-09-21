@@ -363,9 +363,11 @@ class FanqieClient:
         is_draft: bool = False,
         publish_time: Optional[str] = None,
         volume_name: Optional[str] = None,
+        is_ai: bool = False,
     ) -> Dict[str, Any]:
         """
-        全自动发布单章节（支持存草稿、立即发布或指定日期时间定时发布，支持指定分卷）
+        全自动发布单章节（支持存草稿、立即发布或指定日期时间定时发布，支持指定分卷）。
+        - is_ai: 是否声明为AI生成内容（默认为 False，即选择'否'。执行前需向用户确认）
         """
         page = await self.browser_mgr.new_page(headless=True)
         try:
@@ -486,10 +488,11 @@ class FanqieClient:
                 await check_btn.click()
                 await asyncio.sleep(1.5)
 
-            # 处理 是否使用AI: 否
-            ai_no = await page.query_selector(".arco-modal label:has-text('否'), label:has-text('否')")
-            if ai_no:
-                await ai_no.click()
+            # 处理 是否使用AI: 默认为 否 (is_ai=False)
+            ai_target = "是" if is_ai else "否"
+            ai_choice = await page.query_selector(f".arco-modal label:has-text('{ai_target}'), label:has-text('{ai_target}')")
+            if ai_choice:
+                await ai_choice.click()
                 await asyncio.sleep(0.5)
 
             # 处理定时发布开关
@@ -558,9 +561,11 @@ class FanqieClient:
         delay_seconds: float = 2.0,
         interval_hours: float = 12.0,
         start_time: Optional[str] = None,
+        is_ai: bool = False,
     ) -> Dict[str, Any]:
         """
         全自动按照分卷目录结构发文（支持批量存草稿、直接发布或智能定时发布）
+        - is_ai: 是否声明为AI生成内容（默认为 False，即选择'否'。执行前需向用户确认）
         - 自动扫描分卷子目录（例如 '卷一_这笔账先算清'）并提取分卷名称
         - 按卷按章顺序执行，自动处理分卷创建与切换
         - 若发布遇到平台每日字数上限限制，自动平滑存入草稿箱，绝不漏章
@@ -606,6 +611,7 @@ class FanqieClient:
                 is_draft=is_draft,
                 publish_time=publish_time,
                 volume_name=volume_name,
+                is_ai=is_ai,
             )
 
             # 如果直接发布因每日上限报错，自动尝试存为草稿
@@ -616,6 +622,7 @@ class FanqieClient:
                     content=content,
                     is_draft=True,
                     volume_name=volume_name,
+                    is_ai=is_ai,
                 )
                 if draft_res["success"]:
                     res = draft_res

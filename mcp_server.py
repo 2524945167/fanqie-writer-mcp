@@ -114,7 +114,8 @@ async def fanqie_publish_chapter(
     content: str,
     is_draft: bool = False,
     publish_time: Optional[str] = None,
-    volume_name: Optional[str] = None
+    volume_name: Optional[str] = None,
+    is_ai: bool = False
 ) -> str:
     """
     全自动发布单章节（支持存草稿、定时发布、立即发布，支持指定分卷）。
@@ -124,6 +125,7 @@ async def fanqie_publish_chapter(
     - is_draft: 是否仅存为草稿（默认 False）
     - publish_time: 定时发布时间，格式如 '2026-09-22 12:00:00'。若不传则立即发布。
     - volume_name: 分卷名称，若指定则自动归入该分卷
+    - is_ai: 是否声明为AI生成内容（默认为 False，即选择'否'。AI助手在调用此工具前必须主动向用户确认是否声明为AI生成）
     """
     res = await fanqie_client.publish_chapter(
         book_id=book_id,
@@ -131,7 +133,8 @@ async def fanqie_publish_chapter(
         content=content,
         is_draft=is_draft,
         publish_time=publish_time,
-        volume_name=volume_name
+        volume_name=volume_name,
+        is_ai=is_ai
     )
     return json.dumps(res, ensure_ascii=False, indent=2)
 
@@ -143,7 +146,8 @@ async def fanqie_batch_publish_chapters(
     interval_hours: Optional[float] = None,
     daily_slots: Optional[List[str]] = None,
     is_draft: bool = False,
-    delay_between_chapters_sec: float = 2.0
+    delay_between_chapters_sec: float = 2.0,
+    is_ai: bool = False
 ) -> str:
     """
     一键批量自动定时发布大量文章章节。
@@ -154,6 +158,7 @@ async def fanqie_batch_publish_chapters(
     - daily_slots: 每日固定发布档期，如 ['10:00', '18:00']（与 interval_hours 二选一，优先采用 daily_slots）
     - is_draft: 是否批量保存为草稿（默认 False）
     - delay_between_chapters_sec: 每章发布间隔等待秒数，防止过快触发限频（默认 2 秒）
+    - is_ai: 是否声明为AI生成内容（默认为 False，即选择'否'。AI助手在调用此工具前必须主动向用户确认是否声明为AI生成）
     """
     source_path = Path(chapters_source)
     if not source_path.exists():
@@ -205,7 +210,8 @@ async def fanqie_batch_publish_chapters(
             title=title,
             content=content,
             is_draft=is_draft,
-            publish_time=ptime
+            publish_time=ptime,
+            is_ai=is_ai
         )
 
         item_record = {
@@ -249,7 +255,8 @@ async def fanqie_publish_volume_book(
     max_chapters: Optional[int] = None,
     delay_seconds: float = 2.0,
     interval_hours: float = 12.0,
-    start_time: Optional[str] = None
+    start_time: Optional[str] = None,
+    is_ai: bool = False
 ) -> str:
     """
     全自动按分卷结构扫描并发布整本小说（支持自动创建与切换分卷）。
@@ -261,6 +268,7 @@ async def fanqie_publish_volume_book(
     - delay_seconds: 每章发布间隔等待秒数（默认 2 秒）
     - interval_hours: 定时发布模式下每章间隔小时数（默认 12 小时）
     - start_time: 定时发布模式下首章开始时间（如 '2026-09-22 10:00:00'）
+    - is_ai: 是否声明为AI生成内容（默认为 False，即选择'否'。AI助手在调用此工具前必须主动向用户确认是否声明为AI生成）
     """
     res = await fanqie_client.publish_volume_book(
         book_id=book_id,
@@ -270,7 +278,8 @@ async def fanqie_publish_volume_book(
         max_chapters=max_chapters,
         delay_seconds=delay_seconds,
         interval_hours=interval_hours,
-        start_time=start_time
+        start_time=start_time,
+        is_ai=is_ai
     )
     return json.dumps(res, ensure_ascii=False, indent=2)
 
