@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# 敏感登录态与会话（严禁上传包含作者 Cookie 与会话的目录）
+.session/
+*.png
+*.jpg
+*.jpeg
+
+# 本地日志与产物
+outputs/
+logs/
+*.log
+
+# IDE 与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
